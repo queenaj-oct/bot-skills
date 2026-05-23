@@ -3,47 +3,26 @@ import requests
 from telegram import Update
 from telegram.ext import CommandHandler, ContextTypes
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-
 async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Format: /ai <pertanyaanmu>")
+    key = os.getenv("GROQ_API_KEY")
+    if not key:
+        await update.message.reply_text("Error: Key tidak ditemukan di server!")
         return
-
-    user_message = " ".join(context.args)
-    await update.message.reply_text("🧠 Sedang berpikir...")
-
-    if not GROQ_API_KEY:
-        await update.message.reply_text("Error: GROQ_API_KEY belum disetting di Railway!")
-        return
-
+    
+    # Cek panjang karakter (seharusnya API Key cukup panjang)
+    await update.message.reply_text(f"Key terdeteksi! Panjang karakter: {len(key)}. Mencoba koneksi...")
+    
     try:
-        url = "https://api.groq.com/openai/v1/chat/completions"
-        headers = {
-            # Tambahkan .strip() untuk mencegah spasi tidak sengaja di API Key
-            "Authorization": f"Bearer {GROQ_API_KEY.strip()}",
-            "Content-Type": "application/json"
-        }
-        data = {
-            # Menggunakan model Llama 3.1 terbaru yang didukung Groq
-            "model": "llama-3.1-8b-instant",
-            "messages": [{"role": "user", "content": user_message}]
-        }
-
-        response = requests.post(url, headers=headers, json=data)
+        url = "https://api.groq.com/openai/v1/models"
+        headers = {"Authorization": f"Bearer {key.strip()}"}
+        response = requests.get(url, headers=headers)
         
-        # Jika masih error, bot akan menampilkan alasan asli dari server Groq
-        if response.status_code != 200:
-            await update.message.reply_text(f"Error API Groq: {response.text}")
-            return
-            
-        result = response.json()
-        reply = result["choices"][0]["message"]["content"]
-        
-        await update.message.reply_text(reply)
-
+        if response.status_code == 200:
+            await update.message.reply_text("Koneksi ke Groq berhasil! API Key valid.")
+        else:
+            await update.message.reply_text(f"Koneksi gagal! Status: {response.status_code}. Pesan: {response.text}")
     except Exception as e:
-        await update.message.reply_text(f"Terjadi kesalahan sistem: {e}")
+        await update.message.reply_text(f"Error sistem: {e}")
 
 def setup(application):
     application.add_handler(CommandHandler("ai", ai_command))
