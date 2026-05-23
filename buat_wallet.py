@@ -1,37 +1,38 @@
-from telegram import Update
-from telegram.ext import CommandHandler, ContextTypes
-from solders.keypair import Keypair
-import base58
+from telegram.ext import CommandHandler
 
-async def buat_wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keypair = Keypair()
-    public_key = str(keypair.pubkey())
-    private_key_b58 = base58.b58encode(bytes(keypair)).decode('utf-8')
+# Memori sementara untuk menyimpan alamat wallet per user
+# (Data ini akan hilang jika bot restart/redeploy)
+user_wallet_memory = {}
 
-    # MENYIMPAN KE MEMORI BOT
-    context.user_data['my_wallet'] = public_key
+async def buat_wallet(update, context):
+    # --- LOGIKA PEMBUATAN WALLET ANDA ---
+    # Contoh: anggaplah ini hasil dari fungsi pembuat wallet Anda
+    public_key = "AwLRfaR3wjgm7wdv7JFSkdxY45ymvpcQxS4zqVbBQXHt" 
     
-    pesan = (
-        f"🆕 **Wallet Solana Baru Berhasil Dibuat!**\n\n"
-        f"🔑 **Public Key:** `{public_key}`\n"
-        f"✅ *Alamat ini telah disimpan di memori bot.*"
-    )
-    await update.message.reply_text(pesan, parse_mode="Markdown")
-
-async def saldo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # MENGECEK APAKAH ADA ALAMAT DISIMPAN
-    wallet_tersimpan = context.user_data.get('my_wallet')
+    # Simpan ke memori berdasarkan ID Telegram user
+    user_id = update.effective_user.id
+    user_wallet_memory[user_id] = public_key
     
-    # Jika user mengetik /saldo, cek jika ada alamat yang diketik, jika tidak pakai yang tersimpan
-    alamat = context.args[0] if context.args else wallet_tersimpan
-    
-    if not alamat:
-        await update.message.reply_text("⚠️ Harap masukkan alamat wallet atau buat wallet baru dengan /buat_wallet")
-        return
+    await update.message.reply_text(f"✅ Wallet berhasil dibuat!\n🔑 Public Key: {public_key}\n\n*Alamat ini tersimpan di memori bot untuk pengecekan saldo otomatis.*")
 
-    # Lanjutkan dengan kode cek saldo Anda...
-    await update.message.reply_text(f"🔍 Mengecek saldo untuk: `{alamat}`...", parse_mode="Markdown")
+async def saldo_command(update, context):
+    user_id = update.effective_user.id
+    
+    # 1. Cek apakah ada alamat tersimpan di memori
+    if user_id in user_wallet_memory:
+        alamat = user_wallet_memory[user_id]
+        await update.message.reply_text(f"🔍 Mengecek saldo untuk wallet tersimpan: `{alamat}`...")
+        # (Lanjut masukkan logika pengecekan saldo Anda di sini menggunakan variabel 'alamat')
+        
+    # 2. Jika tidak ada di memori, cek apakah user memasukkan alamat manual
+    elif context.args:
+        alamat = context.args[0]
+        await update.message.reply_text(f"🔍 Mengecek saldo untuk: `{alamat}`...")
+        
+    # 3. Jika tidak ada sama sekali
+    else:
+        await update.message.reply_text("⚠️ Anda belum membuat wallet atau wallet tidak tersimpan di sesi ini.\nKetik: /saldo <alamat_wallet>")
 
 def setup(application):
-    application.add_handler(CommandHandler("buat_wallet", buat_wallet_command))
+    application.add_handler(CommandHandler("buat_wallet", buat_wallet))
     application.add_handler(CommandHandler("saldo", saldo_command))
