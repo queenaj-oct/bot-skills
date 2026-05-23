@@ -3,7 +3,6 @@ import requests
 from telegram import Update
 from telegram.ext import CommandHandler, ContextTypes
 
-# Mengambil API Key dari Railway Variables
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -15,33 +14,36 @@ async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🧠 Sedang berpikir...")
 
     if not GROQ_API_KEY:
-        await update.message.reply_text("Error: GROQ_API_KEY belum disetting!")
+        await update.message.reply_text("Error: GROQ_API_KEY belum disetting di Railway!")
         return
 
     try:
-        # Menghubungi server Groq secara langsung tanpa SDK berat
         url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {
-            "Authorization": f"Bearer {GROQ_API_KEY}",
+            # Tambahkan .strip() untuk mencegah spasi tidak sengaja di API Key
+            "Authorization": f"Bearer {GROQ_API_KEY.strip()}",
             "Content-Type": "application/json"
         }
         data = {
-            "model": "llama3-8b-8192", # Model teringan dan tercepat di Groq
+            # Menggunakan model Llama 3.1 terbaru yang didukung Groq
+            "model": "llama-3.1-8b-instant",
             "messages": [{"role": "user", "content": user_message}]
         }
 
         response = requests.post(url, headers=headers, json=data)
-        response.raise_for_status()
         
+        # Jika masih error, bot akan menampilkan alasan asli dari server Groq
+        if response.status_code != 200:
+            await update.message.reply_text(f"Error API Groq: {response.text}")
+            return
+            
         result = response.json()
         reply = result["choices"][0]["message"]["content"]
         
         await update.message.reply_text(reply)
 
     except Exception as e:
-        await update.message.reply_text(f"Terjadi kesalahan AI: {e}")
+        await update.message.reply_text(f"Terjadi kesalahan sistem: {e}")
 
 def setup(application):
-    # Mendaftarkan perintah /ai ke dalam bot
     application.add_handler(CommandHandler("ai", ai_command))
-
