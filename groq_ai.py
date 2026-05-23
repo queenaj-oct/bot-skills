@@ -6,23 +6,42 @@ from telegram.ext import CommandHandler, ContextTypes
 async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     key = os.getenv("GROQ_API_KEY")
     if not key:
-        await update.message.reply_text("Error: Key tidak ditemukan di server!")
+        await update.message.reply_text("Error: API Key tidak ditemukan!")
         return
-    
-    # Cek panjang karakter (seharusnya API Key cukup panjang)
-    await update.message.reply_text(f"Key terdeteksi! Panjang karakter: {len(key)}. Mencoba koneksi...")
-    
+
+    if not context.args:
+        await update.message.reply_text("Masukkan pertanyaan setelah /ai")
+        return
+
+    user_text = " ".join(context.args)
+    await update.message.reply_text("🧠 Berpikir...")
+
     try:
-        url = "https://api.groq.com/openai/v1/models"
-        headers = {"Authorization": f"Bearer {key.strip()}"}
-        response = requests.get(url, headers=headers)
+        # Menggunakan endpoint dan model yang lebih standar
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {key.strip()}",
+            "Content-Type": "application/json"
+        }
+        # Struktur data minimalis agar tidak ditolak server
+        payload = {
+            "model": "llama3-8b-8192", 
+            "messages": [{"role": "user", "content": user_text}]
+        }
+
+        response = requests.post(url, headers=headers, json=payload)
         
         if response.status_code == 200:
-            await update.message.reply_text("Koneksi ke Groq berhasil! API Key valid.")
+            data = response.json()
+            reply = data['choices'][0]['message']['content']
+            await update.message.reply_text(reply)
         else:
-            await update.message.reply_text(f"Koneksi gagal! Status: {response.status_code}. Pesan: {response.text}")
+            # Ini akan menunjukkan alasan error sebenarnya
+            await update.message.reply_text(f"Error {response.status_code}: {response.text}")
+
     except Exception as e:
-        await update.message.reply_text(f"Error sistem: {e}")
+        await update.message.reply_text(f"Error sistem: {str(e)}")
 
 def setup(application):
     application.add_handler(CommandHandler("ai", ai_command))
+
