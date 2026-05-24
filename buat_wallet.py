@@ -1,14 +1,16 @@
 import sqlite3
 import requests
-import json
 import ast
 from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler
+
+# Library Solana versi terbaru (Solders)
 from solders.keypair import Keypair
-from solana.rpc.api import Client
 from solders.pubkey import Pubkey
-from solana.transaction import Transaction
 from solders.system_program import TransferParams, transfer
+from solders.message import MessageV0
+from solders.transaction import VersionedTransaction
+from solana.rpc.api import Client
 
 # --- CONFIG ---
 RPC_URL = "https://api.mainnet-beta.solana.com"
@@ -73,21 +75,19 @@ async def saldo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Buat wallet dulu atau masukkan alamat.")
         return
 
-    payload = {"jsonrpc": "2.0", "id": 1, "method": "getBalance", "params": [alamat]}
     try:
-        res = requests.post(RPC_URL, json=payload).json()
-        bal = res['result']['value'] / 1_000_000_000
+        res = solana_client.get_balance(Pubkey.from_string(alamat))
+        bal = res.value / 1_000_000_000
         await update.message.reply_text(f"💰 **Saldo:** `{bal:.4f} SOL`", parse_mode="Markdown")
-    except:
-        await update.message.reply_text("❌ Gagal cek saldo.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Gagal cek saldo: {str(e)}")
 
-# --- FITUR BARU: WITHDRAW (KIRIM SALDO) ---
+# --- FITUR WITHDRAW (VERSI FIXED) ---
 async def withdraw_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
-    # Validasi input: /withdraw <alamat_tujuan> <jumlah>
     if len(context.args) < 2:
-        await update.message.reply_text("⚠️ Format: `/withdraw <alamat_tujuan> <jumlah>`\nContoh: `/withdraw AddressAura... 0.1`", parse_mode="Markdown")
+        await update.message.reply_text("⚠️ Format: `/withdraw <alamat_tujuan> <jumlah>`", parse_mode="Markdown")
         return
 
     dest_address = context.args[0]
@@ -97,7 +97,6 @@ async def withdraw_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Jumlah harus angka.")
         return
 
-    # 1. Ambil Private Key dari Database
     conn = sqlite3.connect('wallets.db')
     cursor = conn.cursor()
     cursor.execute('SELECT private_key FROM user_wallets WHERE user_id = ?', (user_id,))
@@ -111,39 +110,39 @@ async def withdraw_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await update.message.reply_text(f"⏳ Memproses pengiriman {amount} SOL...")
 
-        # 2. Siapkan Akun Pengirim
-        secret_list = ast.literal_eval(row[0]) # Mengubah string list kembali ke list asli
-        sender_keypair = Keypair.from_bytes(bytes(secret_list))
+        # Persiapkan Keypair
+        secret_list = ast.literal_eval(row[0])
+        sender = Keypair.from_bytes(bytes(secret_list))
+        receiver = Pubkey.from_string(dest_address)
         
-        # 3. Buat Instruksi Transfer
-        receiver_pubkey = Pubkey.from_string(dest_address)
-        lamports = int(amount * 1_000_000_000)
-        
-        # Ambil blockhash terbaru
+        # Ambil blockhash
         recent_blockhash = solana_client.get_latest_blockhash().value.blockhash
         
-        # Buat transaksi
-        txn = Transaction(
-            instructions=[
-                transfer(TransferParams(from_pubkey=sender_keypair.pubkey(), to_pubkey=receiver_pubkey, lamports=lamports))
-            ],
+        # Buat Instruksi Transfer
+        ix = transfer(TransferParams(
+            from_pubkey=sender.pubkey(), 
+            to_pubkey=receiver, 
+            lamports=int(amount * 1_000_000_000)
+        ))
+        
+        # Buat Pesan Transaksi V0 (Standar Terbaru)
+        msg = MessageV0.try_compile(
+            payer=sender.pubkey(),
+            instructions=[ix],
+            address_lookup_table_accounts=[],
             recent_blockhash=recent_blockhash,
-            fee_payer=sender_keypair.pubkey()
         )
         
-        # 4. Kirim & Konfirmasi
-        result = solana_client.send_transaction(txn, sender_keypair)
-        signature = result.value
+        # Sign dan Kirim
+        tx = VersionedTransaction(msg, [sender])
+        result = solana_client.send_transaction(tx)
         
         await update.message.reply_text(
-            f"🚀 **Transaksi Berhasil Dikirim!**\n\n"
-            f"✅ **Jumlah:** {amount} SOL\n"
-            f"📍 **Ke:** `{dest_address}`\n"
-            f"🔗 [Lihat di Solscan](https://solscan.io/tx/{signature})",
+            f"🚀 **Berhasil!**\n✅ **Jumlah:** {amount} SOL\n🔗 [Lihat di Solscan](https://solscan.io/tx/{str(result.value)})",
             parse_mode="Markdown", disable_web_page_preview=True
         )
     except Exception as e:
-        await update.message.reply_text(f"❌ Transaksi Gagal: {str(e)}")
+        await update.message.reply_text(f"❌ Gagal: {str(e)}")
 
 def setup(application):
     application.add_handler(CommandHandler("buat_wallet", buat_wallet_cmd))
