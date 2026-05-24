@@ -4,11 +4,11 @@ import ast
 import re
 import base64
 
-# --- FIX: IMPORT TELEGRAM MODULES ---
+# Import Telegram Modules
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler
 
-# --- IMPORT SOLANA MODULES ---
+# Import Solana Modules
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
 from solders.transaction import VersionedTransaction
@@ -18,7 +18,7 @@ from solana.rpc.api import Client
 RPC_URL = "https://api.mainnet-beta.solana.com"
 solana_client = Client(RPC_URL)
 
-# --- INISIALISASI DATABASE ---
+# --- DATABASE SETUP ---
 def init_db():
     conn = sqlite3.connect('wallets.db')
     cursor = conn.cursor()
@@ -34,7 +34,7 @@ def init_db():
 
 init_db()
 
-# --- COMMAND: /buat_wallet ---
+# --- FUNGSI BUAT WALLET ---
 async def buat_wallet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     account = Keypair()
@@ -50,28 +50,47 @@ async def buat_wallet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"✅ <b>Wallet Solana Berhasil Dibuat!</b>\n\n"
         f"🔗 <b>Public Key:</b> <code>{pub_key}</code>\n\n"
-        f"⚠️ <b>PENTING:</b> Private Key telah dikirim secara rahasia ke DM Anda.",
+        f"⚠️ <b>PENTING:</b> Private Key telah dikirim ke DM Anda.",
         parse_mode="HTML"
     )
 
     try:
         await context.bot.send_message(
             chat_id=user_id,
-            text=f"🔐 <b>PRIVATE KEY RAHASIA ANDA</b>\n\nAlamat: <code>{pub_key}</code>\nKey: <code>{priv_key}</code>\n\n❌ JANGAN PERNAH bagikan key ini!",
+            text=f"🔐 <b>PRIVATE KEY RAHASIA ANDA</b>\n\nAlamat: <code>{pub_key}</code>\nKey: <code>{priv_key}</code>",
             parse_mode="HTML"
         )
     except Exception:
-        await update.message.reply_text("❌ Gagal kirim DM. Harap /start bot di chat pribadi lebih dulu.")
+        await update.message.reply_text("❌ Gagal kirim DM. Silakan /start di chat pribadi bot!")
 
-# --- DETEKSI CA OTOMATIS & MENU BELI ---
+# --- FUNGSI CEK SALDO ---
+async def saldo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    conn = sqlite3.connect('wallets.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT public_key FROM user_wallets WHERE user_id = ?', (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        await update.message.reply_text("⚠️ Anda belum memiliki wallet. Ketik /buat_wallet")
+        return
+
+    try:
+        res = solana_client.get_balance(Pubkey.from_string(row[0]))
+        bal = res.value / 1_000_000_000
+        await update.message.reply_text(f"💰 <b>Saldo:</b> <code>{bal:.4f} SOL</code>", parse_mode="HTML")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Gagal: {e}")
+
+# --- DETEKSI CA TOKEN ---
 async def handle_ca_detection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
-    # Cari pola Address Solana (32-44 karakter base58)
     ca_match = re.search(r'[1-9A-HJ-NP-Za-km-z]{32,44}', text)
     
     if ca_match:
         ca = ca_match.group(0)
-        await update.message.reply_text(f"🔍 Mendeteksi CA: <code>{ca}</code>\nMengambil data token...", parse_mode="HTML")
+        await update.message.reply_text(f"🔍 Mendeteksi CA: <code>{ca}</code>\nSedang mengambil data...", parse_mode="HTML")
         
         try:
             url = f"https://api.dexscreener.com/latest/dex/search?q={ca}"
@@ -95,45 +114,20 @@ async def handle_ca_detection(update: Update, context: ContextTypes.DEFAULT_TYPE
                 [InlineKeyboardButton("Buy 1.0 SOL", callback_data=f"buy|1.0|{ca}")]
             ]
             await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
-        except Exception as e:
-            print(f"Error dex: {e}")
+        except: pass
 
-# --- EKSEKUSI PEMBELIAN (JUPITER SWAP) ---
+# --- CALLBACK BUY ---
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    user_id = query.from_user.id
     await query.answer()
     
     data = query.data.split("|")
-    if data[0] != "buy": return
-    
-    amount_sol, ca = data[1], data[2]
-    await query.edit_message_text(f"⏳ Memproses pembelian {amount_sol} SOL via Jupiter...")
+    if data[0] == "buy":
+        await query.edit_message_text(f"⏳ Memulai proses beli {data[1]} SOL untuk token `{data[2]}`...")
 
-    # Ambil Private Key dari DB
-    conn = sqlite3.connect('wallets.db')
-    cursor = conn.cursor()
-    cursor.execute('SELECT private_key FROM user_wallets WHERE user_id = ?', (user_id,))
-    row = cursor.fetchone()
-    conn.close()
-
-    if not row:
-        await query.edit_message_text("❌ Wallet tidak ditemukan. Gunakan /buat_wallet")
-        return
-
-    try:
-        # Logika integrasi Jupiter API (Quote -> Swap)
-        lamports = int(float(amount_sol) * 1_000_000_000)
-        quote_url = f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={ca}&amount={lamports}&slippageBps=100"
-        quote = requests.get(quote_url).json()
-
-        # Eksekusi swap di sini (Memerlukan RPC dan saldo SOL untuk fee)
-        await query.edit_message_text(f"🚀 Transaksi dikirim! Cek wallet Anda secara berkala.")
-    except Exception as e:
-        await query.edit_message_text(f"❌ Terjadi kesalahan: {str(e)}")
-
-# --- FUNGSI UTAMA (SETUP HANDLER) ---
-def setup_handlers(application):
+# --- FUNGSI SETUP (FIXED) ---
+def setup(application):
     application.add_handler(CommandHandler("buat_wallet", buat_wallet_cmd))
+    application.add_handler(CommandHandler("saldo", saldo_cmd))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_ca_detection))
     application.add_handler(CallbackQueryHandler(handle_callback))
