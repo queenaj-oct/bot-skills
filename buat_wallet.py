@@ -4,7 +4,6 @@ import re
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, CallbackQueryHandler
 from solders.keypair import Keypair
-from solders.pubkey import Pubkey
 from solana.rpc.api import Client
 
 # RPC Solana
@@ -33,29 +32,38 @@ async def buat_wallet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.commit()
     conn.close()
 
-    await update.message.reply_text(f"✅ Wallet Dibuat!\nPubkey: <code>{pub_key}</code>", parse_mode="HTML")
+    await update.message.reply_text(f"✅ <b>Wallet Solana Berhasil Dibuat!</b>\n\n🔗 Pubkey: <code>{pub_key}</code>\n\n⚠️ Private Key telah dikirim ke DM Anda.", parse_mode="HTML")
     try:
-        await context.bot.send_message(chat_id=user_id, text=f"🔐 Private Key: <code>{priv_key}</code>", parse_mode="HTML")
+        await context.bot.send_message(chat_id=user_id, text=f"🔐 Private Key RAHASIA Anda:\n<code>{priv_key}</code>", parse_mode="HTML")
     except: pass
 
-# Deteksi CA Otomatis & Menu Swap
+# Deteksi CA & Menu Swap
 async def handle_ca(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    ca = re.search(r'[1-9A-HJ-NP-Za-km-z]{32,44}', update.message.text)
-    if ca:
-        token_address = ca.group(0)
-        # Ambil data dari DexScreener
-        res = requests.get(f"https://api.dexscreener.com/latest/dex/search?q={token_address}").json()
-        pair = res["pairs"][0]
+    text = update.message.text
+    ca_match = re.search(r'[1-9A-HJ-NP-Za-km-z]{32,44}', text)
+    
+    if ca_match:
+        token_address = ca_match.group(0)
+        await update.message.reply_text(f"🔍 Mendeteksi CA: <code>{token_address}</code>\nSedang mengambil data token...", parse_mode="HTML")
         
-        msg = (f"🔍 Token: {pair['baseToken']['symbol']}\n"
-               f"💵 Harga: ${pair['priceUsd']}\n\n"
-               "Pilih jumlah SOL untuk Swap:")
-        
-        keyboard = [[
-            InlineKeyboardButton("0.1 SOL", callback_data=f"buy|0.1|{token_address}"),
-            InlineKeyboardButton("0.5 SOL", callback_data=f"buy|0.5|{token_address}")
-        ]]
-        await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+        try:
+            res = requests.get(f"https://api.dexscreener.com/latest/dex/search?q={token_address}").json()
+            pair = res["pairs"][0]
+            symbol = pair['baseToken']['symbol']
+            price = pair['priceUsd']
+            
+            msg = (f"💎 Token Ditemukan: {symbol}\n"
+                   f"💵 Harga: ${price}\n\n"
+                   "Pilih jumlah SOL untuk membeli:")
+            
+            keyboard = [
+                [InlineKeyboardButton("Buy 0.1 SOL", callback_data=f"buy|0.1|{token_address}"),
+                 InlineKeyboardButton("Buy 0.5 SOL", callback_data=f"buy|0.5|{token_address}")],
+                [InlineKeyboardButton("Buy 1.0 SOL", callback_data=f"buy|1.0|{token_address}")]
+            ]
+            await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+        except:
+            await update.message.reply_text("❌ Gagal mengambil data token. Pastikan CA benar.")
 
 # Fungsi Wajib untuk Installer
 def setup(application):
